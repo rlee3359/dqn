@@ -1,0 +1,116 @@
+#! /usr/bin/env python3
+
+import numpy as np, cv2, copy, sys, os, math, random, time, torch, torch.nn as nn, torch.optim as optim, torch.nn.functional as F, collections, tensorboardX, gym
+from torch.nn.parameter import Parameter
+
+# Parameters
+def arg(tag, default):
+    return type(default)((sys.argv[sys.argv.index(tag)+1])) if tag in sys.argv else default
+
+RENDER   = arg("--rend",  False)
+SEED     = arg("--seed",  0)
+BATCH    = arg("--batch", 64)
+BUFFER   = arg("--buf",   int(1e4))
+EPISODES = arg("--eps",   1000)
+RUN_NAME = arg("--name",  "DQN")
+DOMAIN   = arg("--dom",   "cartpole")
+TASK     = arg("--task",  "balance")
+EPSILON  = arg("--eps",   1)
+GAMMA    = arg("--gam",   0.85)
+
+#==============================================================================
+# Helpers
+#==============================================================================
+
+def sample_batch():
+    batch = random.sample(replay_buffer, BATCH)
+
+    obs    = torch.FloatTensor([step[0] for step in batch]).view(BATCH,-1)
+    acts   = torch.FloatTensor([step[1] for step in batch]).view(BATCH,-1)
+    rews   = torch.FloatTensor([step[2] for step in batch]).view(BATCH,-1)
+    nobs   = torch.FloatTensor([step[3] for step in batch]).view(BATCH,-1)
+    dones  = torch.FloatTensor([step[4] for step in batch]).view(BATCH,-1)
+
+    return obs, acts, rews, nobs, dones
+
+#------------------------------------------------------------------------------
+
+def select_action(obs):
+    global EPSILON
+    EPSILON *= 0.999
+    if np.random.random() > EPSILON:
+        _, act = torch.max(Q_net(torch.FloatTensor(obs)), dim=0)
+        act = int(act)
+    else:
+        act = np.random.randint(0, act_size)
+    return act
+
+#------------------------------------------------------------------------------
+
+def train_model():
+    if len(replay_buffer) > BATCH:
+        obs, acts, rews, nobs, dones = sample_batch()
+
+        max_Qn, _ = torch.max(Q_target(nobs), dim=1)
+        max_Qn = max_Qn.view(BATCH, 1)
+        target = rews + GAMMA*max_Qn * (1-dones)
+        Q = torch.gather(Q_net(obs), dim=1, index=acts.long())
+
+        loss = F.smooth_l1_loss(Q, target)
+
+        q_optim.zero_grad()
+        loss.backward()
+        q_optim.step()
+
+        for p1,p2 in zip(Q_target.parameters(), Q_net.parameters()):
+            p1.data = (p2.data.clone() * 0.001) + (p1.data.clone() * (1-0.001))
+
+#------------------------------------------------------------------------------
+
+def run_episode(update):
+    obs = env.reset(); length = 0; reward = 0
+    done = False
+    while not done:
+        env.render()
+        act = select_action(obs)
+        nobs, rew, done, info = env.step(act)
+        rew = -1 if done else 0
+        replay_buffer.append([obs, [act], rew, nobs, done])
+        obs = nobs
+        length += 1; reward += rew; update += 1
+        train_model()
+
+    writer.add_scalar(RUN_NAME+"/Length", length, i_episode)
+    writer.add_scalar(RUN_NAME+"/Reward", reward, i_episode)
+
+#==============================================================================
+# Setup
+#==============================================================================
+
+env = gym.make('CartPole-v1')
+random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED); env.seed(SEED)
+
+obs_size = env.observation_space.shape[0]
+act_size = 2
+# act_size = env.action_space.shape
+
+replay_buffer = collections.deque(maxlen=BUFFER)
+
+Q_net   = nn.Sequential(nn.Linear(obs_size, 128), nn.ReLU(),
+                        nn.Linear(128, act_size))
+q_optim = optim.Adam(Q_net.parameters(), lr=1e-3)
+
+Q_net[-1].weight.data *= 0.05
+Q_net[-1].bias.data   *= 0.05
+
+Q_target = copy.deepcopy(Q_net)
+
+writer = tensorboardX.SummaryWriter(comment = RUN_NAME)
+
+#==============================================================================
+# Run
+#==============================================================================
+
+update = 0
+for i_episode in range(EPISODES):
+    run_episode(update)
