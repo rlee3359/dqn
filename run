@@ -7,7 +7,6 @@ from torch.nn.parameter import Parameter
 def arg(tag, default):
     return type(default)((sys.argv[sys.argv.index(tag)+1])) if tag in sys.argv else default
 
-RENDER   = arg("--rend",  False)
 SEED     = arg("--seed",  0)
 BATCH    = arg("--batch", 64)
 BUFFER   = arg("--buf",   int(1e4))
