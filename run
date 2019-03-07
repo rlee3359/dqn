@@ -92,7 +92,7 @@ random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED); env.seed(SEED)
 
 obs_size = env.observation_space.shape[0]
 act_size = 2
-# act_size = env.action_space.shape
+
 
 replay_buffer = collections.deque(maxlen=BUFFER)
 
